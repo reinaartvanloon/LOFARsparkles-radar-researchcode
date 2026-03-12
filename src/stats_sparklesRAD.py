@@ -17,6 +17,7 @@ import xarray as xr
 import matplotlib.ticker as mticker
 from dataclasses import dataclass
 from typing import Optional
+from scipy.stats import ks_2samp, anderson_ksamp
 
 # Custom funtions
 from read_RAD import get_data_RADandLOFAR, ConfigDataRAD, add_mask_RADnearVHF, ConfigMaskRADnearVHF #, add_RAD_near_sparkles_mask_multiradii, kwargs_add_RAD_near_sparkles_mask_multiradii
@@ -111,7 +112,77 @@ class ConfigPlotSparkleStats:
     save: bool = False
     outname: str = None
     outdir: str = None
-#%% Run
+
+#%% Statistical tests functions
+
+def cliffs_delta(x, y):
+    """
+    Calculate Cliff's delta effect size between two groups.
+    
+    Parameters:
+    x, y : array-like
+        Two groups to compare
+    
+    Returns:
+    delta : float
+        Cliff's delta (-1 to +1)
+    """
+    x = np.asarray(x)
+    y = np.asarray(y)
+    
+    # Count pairwise comparisons
+    n1, n2 = len(x), len(y)
+    
+    # Create all pairwise comparisons
+    greater = np.sum(x[:, np.newaxis] > y)  # x > y
+    less = np.sum(x[:, np.newaxis] < y)     # x < y
+    
+    # Calculate delta
+    delta = (greater - less) / (n1 * n2)
+    
+    return delta
+
+def anderson_darling_2sample(x, y):
+    """
+    Two-sample Anderson-Darling test.
+    
+    Parameters:
+    x, y : array-like
+        Two groups to compare
+    
+    Returns:
+    statistic : float
+        Anderson-Darling test statistic
+    p_value : float
+        Approximate p-value
+    """
+    x = np.asarray(x)
+    y = np.asarray(y)
+    
+    n1, n2 = len(x), len(y)
+    n = n1 + n2
+    
+    # Combine and rank
+    combined = np.concatenate([x, y])
+    ranks = np.argsort(np.argsort(combined)) + 1
+    
+    # Ranks for x
+    r1 = ranks[:n1]
+    
+    # Calculate test statistic
+    A2 = (n1 * n2 / n**2) * np.sum(
+        (r1 - np.arange(1, n1 + 1))**2 / 
+        (np.arange(1, n1 + 1) * (n - np.arange(1, n1 + 1)))
+    )
+    
+    # Approximate p-value (rough approximation)
+    # For more accuracy, use specialized libraries
+    p_value = np.exp(-1.2337 * A2 + 1.6067)
+    
+    return A2, p_value
+
+
+#%% Plotting functions
 
 def make_plots(
         config_plots,
@@ -179,7 +250,26 @@ def make_plots(
             outdir=outdir+"/histograms__hmc",
             save=config_plots.save,
             )
+
+def statistical_tests(
+        ds,
+        varlist,
+        vardata,
+        ):
+    for var in varlist:
+        VAR = vardata[var]['ODIM']
+        data_sparkles = ds[VAR].where(ds.mask_sparkles, drop=True).values
+        data_other = ds[VAR].where(ds.mask_otherVHF & (~ds.mask_sparkles), drop=True).values
         
+        ks_stat, ks_pvalue = ks_2samp(data_sparkles, data_other)
+        anderson_stat, anderson_critical, anderson_pvalue = anderson_ksamp([data_sparkles, data_other])
+        delta = cliffs_delta(data_sparkles, data_other)
+        
+        print(f"Statistical tests for variable {var}:")
+        print(f"      KS-test: statistic={ks_stat:.4f}, p-value={ks_pvalue:.4e}")
+        print(f"      Anderson-Darling: statistic={anderson_stat:.4f}, p-value={anderson_pvalue:.4e}")
+        print(f"      Cliff's delta={delta:.4f}")
+
 def main(
     config_plots : ConfigPlotSparkleStats,
     config_data_RAD: ConfigDataRAD,
@@ -231,6 +321,9 @@ def main(
 
         ds = ds_all
                 
+        # statistical tests for each variable, comparing sparkles vs other VHF sources
+        statistical_tests(ds, ["dbzh","wradh"], vardata)
+
         make_plots(
             config_plots, 
             ds, 
@@ -239,7 +332,6 @@ def main(
             outdir=config_plots.outdir,
             save=config_plots.save,
             )
-                   
         
     else: #Results of different LOFAR images in different graphs
         for i, file in enumerate(config_plots.LOFARfile_list):
