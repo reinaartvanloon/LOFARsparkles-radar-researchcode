@@ -10,6 +10,8 @@ import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import os
 import numpy as np
+from shapely import MultiPolygon
+from shapely import MultiPolygon
 import wradlib as wrl
 import json
 import psutil
@@ -18,6 +20,8 @@ import matplotlib.ticker as mticker
 from dataclasses import dataclass
 from typing import Optional
 from scipy.stats import ks_2samp, anderson_ksamp
+import shapely.geometry
+import shapely.ops
 
 # Custom funtions
 from read_RAD import get_data_RADandLOFAR, ConfigDataRAD, add_mask_RADnearVHF, ConfigMaskRADnearVHF #, add_RAD_near_sparkles_mask_multiradii, kwargs_add_RAD_near_sparkles_mask_multiradii
@@ -106,8 +110,9 @@ class ConfigPlotSparkleStats:
     LOFARfile_list : list
     varlist : list
     together : bool
-    histogram_1D: bool = True 
+    histogram_1D: bool = True
     histogram_2D: bool = True
+    hist_2D_signif_threshold: int = 10
     topview_plots: Optional[ConfigPlotMultiVarRAD] = False
     save: bool = False
     outname: str = None
@@ -238,6 +243,7 @@ def make_plots(
             outname=outname+"_Zh-Wrad_2D",
             outdir=outdir+"/histograms_Zh-Wrad_2D",
             save=config_plots.save,
+            signif_threshold=config_plots.hist_2D_signif_threshold,
             )
     
     if "hmc" in config_plots.varlist:
@@ -563,13 +569,8 @@ def plot_histogram(
                 orientation='horizontal',
                 color=colors[1], 
                 edgecolor='tab:blue', 
-                label=labels[1])
-    
-            # Add horizontal lines at mean values
-            ax1.axhline(np.nanmean(data_sparkles), color='k',
-                        linestyle='--', linewidth=2)
-            ax2.axhline(np.nanmean(data_other), color='k',
-                        linestyle='--', linewidth=2)
+                label=labels[1],
+                )
     
             ax1.set_yticks(bins[::2])
             ax2.set_yticks([])
@@ -584,7 +585,42 @@ def plot_histogram(
                 ]
             ax1.set_xlim(-xlim[1], xlim[0])
             ax2.set_xlim(xlim[0], xlim[1])
-    
+
+            # Add half box plots flushed to the centre (x=0)
+            box_width = 0.15 * xlim[1]
+            bp_kw = dict(
+                vert=True,
+                widths=[box_width],
+                patch_artist=True,
+                showmeans=True,
+                medianprops=dict(color='k', linewidth=1),
+                meanprops=dict(marker='D', markerfacecolor='grey', markeredgecolor='grey', markersize=4, alpha=0.7),
+                whiskerprops=dict(color='k', linewidth=1),
+                capprops=dict(color='k', linewidth=1),
+                manage_ticks=False,
+                showfliers=False,
+            )
+            ax1.boxplot(
+                data_sparkles[~np.isnan(data_sparkles)],
+                positions=[-box_width/2],
+                boxprops=dict(
+                    facecolor=colors[0], 
+                    color='k',
+                    alpha=0.7,
+                ),
+                **bp_kw,
+            )
+            ax2.boxplot(
+                data_other[~np.isnan(data_other)],
+                positions=[box_width/2],
+                boxprops=dict(
+                    facecolor=colors[1], 
+                    color='k',
+                    alpha=0.7,
+                ),
+                **bp_kw,
+            )
+
             ax1ticklabels = [
                 "{}%".format(int(abs(tick*100))) for tick in ax1.get_xticks()[1:-1]
                 ] + ['']
@@ -917,13 +953,14 @@ def plot_scatter(ds,colors,vardata):
 # %% 2D histograms - preprocessing
 
 def plot_2D_histograms(
-        ds, 
+        ds,
         vardata,
         var_range,
         binsize,
         outname,
         outdir,
-        save=False
+        save=False,
+        signif_threshold=10,
         ):
     
     var_range['dbzh'][1]=60
@@ -1025,6 +1062,69 @@ def plot_2D_histograms(
     _, hist_other_norm_wradhbin_gaps = create_grid_with_gaps(hist_other_norm_wradhbin, axis=0, gap_size=0.2)
     _, hist_diff_wradhbin_gaps = create_grid_with_gaps(hist_diff_wradhbin, axis=0, gap_size=0.2)
     
+    ### Make shapes to mark regions with > 10 counts 
+
+    # Precompute meshgrids for contour overlays
+    # imshow panels (a, c, e): coordinates in data units
+    centers_dbzh = (bins_dbzh[:-1] + bins_dbzh[1:]) / 2
+    centers_wradh = (bins_wradh[:-1] + bins_wradh[1:]) / 2
+    X_dbzh, Y_wradh = np.meshgrid(centers_dbzh, centers_wradh)
+
+    # Find all the cells with significant data and
+    # Get rid of internal boundaries by merging the boxes into one shape
+    signif_sp_shape = []
+    for wrad_idx, dbzh_idx in zip(*np.where(hist_sparkles > signif_threshold)):
+        signif_sp_shape.append(shapely.geometry.box(
+            bins_dbzh[dbzh_idx], bins_wradh[wrad_idx],
+            bins_dbzh[dbzh_idx + 1], bins_wradh[wrad_idx + 1],
+        ))
+    signif_sp_shape = shapely.ops.unary_union(signif_sp_shape)
+
+    signif_os_shape = []
+    for wrad_idx, dbzh_idx in zip(*np.where(hist_other > signif_threshold)):
+        signif_os_shape.append(shapely.geometry.box(
+            bins_dbzh[dbzh_idx], bins_wradh[wrad_idx],
+            bins_dbzh[dbzh_idx + 1], bins_wradh[wrad_idx + 1],
+        ))
+    signif_os_shape = shapely.ops.unary_union(signif_os_shape)
+
+    signif_shape_total = signif_sp_shape.intersection(signif_os_shape)
+
+    # pcolormesh panels (b, d, f): coordinates in column-index units
+    dbzh_col_edges_ = np.arange(num_bins_dbzh+1)
+
+    signif_sp_shape_col = []
+    for wrad_idx, dbzh_idx in zip(*np.where(hist_sparkles > signif_threshold)):
+        signif_sp_shape_col.append(shapely.geometry.box(
+            dbzh_col_edges_[dbzh_idx], bins_wradh[wrad_idx],
+            dbzh_col_edges_[dbzh_idx + 1], bins_wradh[wrad_idx + 1],
+        ))
+    signif_sp_shape_col = shapely.ops.unary_union(signif_sp_shape_col)
+
+    signif_os_shape_col = []
+    for wrad_idx, dbzh_idx in zip(*np.where(hist_other > signif_threshold)):
+        signif_os_shape_col.append(shapely.geometry.box(
+            dbzh_col_edges_[dbzh_idx], bins_wradh[wrad_idx],
+            dbzh_col_edges_[dbzh_idx + 1], bins_wradh[wrad_idx + 1],
+        ))
+    signif_os_shape_col = shapely.ops.unary_union(signif_os_shape_col)
+
+    signif_shape_col_total = signif_sp_shape_col.intersection(signif_os_shape_col)
+    # Convert to MultiPolygon if it's a single Polygon
+    def ensure_multipolygon(shape):
+        if shape.geom_type == 'Polygon':
+            return MultiPolygon([shape])
+        return shape
+
+    signif_sp_shape_col = ensure_multipolygon(signif_sp_shape_col)
+    signif_os_shape_col = ensure_multipolygon(signif_os_shape_col)
+    signif_shape_col_total = ensure_multipolygon(signif_shape_col_total)
+    signif_os_shape = ensure_multipolygon(signif_os_shape)
+    signif_sp_shape = ensure_multipolygon(signif_sp_shape)
+    signif_shape_total = ensure_multipolygon(signif_shape_total)
+
+    _sign_shape_kw = dict(color='k', linewidth=1, linestyle='-')
+    
     ## The real plotting:
     
     # Sum over the WRADH axis to get the total counts per DBZH bin
@@ -1054,7 +1154,9 @@ def plot_2D_histograms(
     # axs[0, 0].set_xlabel(f"{vardata['dbzh']['symbol']} [{vardata['dbzh']['units']}]")
     axs[0, 0].set_ylabel(f"{vardata['wradh']['symbol']} [{vardata['wradh']['units']}]")
     fig.colorbar(im1, ax=axs[0, 0], label='Counts')
-    
+    for shape in signif_sp_shape.geoms:
+        axs[0,0].plot(*shape.exterior.xy, **_sign_shape_kw)
+
     # Annotate the total counts per DBZH bin in Panel 1
     for i, count in enumerate(counts_sparkles_per_dbzhbin):
         axs[0, 0].text(
@@ -1087,7 +1189,9 @@ def plot_2D_histograms(
     # axs[1,0].set_xlabel(f"{vardata['dbzh']['symbol']} [{vardata['dbzh']['units']}]")
     axs[1,0].set_ylabel(f"{vardata['wradh']['symbol']} [{vardata['wradh']['units']}]")
     fig.colorbar(im2, ax=axs[1,0], label='Counts')
-    
+    for shape in signif_os_shape.geoms:
+        axs[1,0].plot(*shape.exterior.xy, **_sign_shape_kw)
+
     # Annotate the total counts per DBZH bin in Panel 1
     for i, count in enumerate(counts_other_per_dbzhbin):
         axs[1,0].text(
@@ -1122,9 +1226,11 @@ def plot_2D_histograms(
     axs[2,0].set_xlabel(f"{vardata['dbzh']['symbol']} [{vardata['dbzh']['units']}]")
     axs[2,0].set_ylabel(f"{vardata['wradh']['symbol']} [{vardata['wradh']['units']}]")
     cbar3 = fig.colorbar(
-        im3, ax=axs[2,0], 
+        im3, ax=axs[2,0],
         label='Difference in Normalized Counts [%]', extend='both',
         )
+    for shape in signif_shape_total.geoms:
+        axs[2,0].plot(*shape.exterior.xy, **_sign_shape_kw)
     # cbar3.ax.yaxis.set_major_formatter(mticker.ScalarFormatter(useMathText=True))
     
     # Annotate the squares with the values from prob_matrix_other
@@ -1153,7 +1259,8 @@ def plot_2D_histograms(
     # axs[0,1].set_xlabel(f"{vardata['dbzh']['symbol']} [{vardata['dbzh']['units']}]")
     # axs[0,1].set_ylabel(f"{vardata['wradh']['symbol']} [{vardata['wradh']['units']}]")
     cbar4 = fig.colorbar(im4, ax=axs[0,1], label='Normalized counts per $Z_h$ bin [%]')
-    
+    for shape in signif_sp_shape_col.geoms:
+        axs[0,1].plot(*shape.exterior.xy, **_sign_shape_kw)
     # Panel d: Other normalized within each DBZH bin
     im5 = axs[1, 1].pcolormesh(
         x, bins_wradh, 
@@ -1161,10 +1268,12 @@ def plot_2D_histograms(
         cmap='Blues',
         )
     axs[1, 1].set_title('(d) Other VHF: normalized per $Z_h$ bin')
+
     # axs[1, 1].set_xlabel(f"{vardata['dbzh']['symbol']} [{vardata['dbzh']['units']}]")
     # axs[1, 1].set_ylabel(f"{vardata['wradh']['symbol']} [{vardata['wradh']['units']}]")
     cbar5 = fig.colorbar(im5, ax=axs[1, 1], label='Normalized counts per $Z_h$ bin [%]')
-    
+    for shape in signif_os_shape_col.geoms:
+        axs[1, 1].plot(*shape.exterior.xy, **_sign_shape_kw)
     # Panel f: Difference in normalized histograms per DBZH bin
     im6 = axs[2, 1].pcolormesh(
         x, bins_wradh, 
@@ -1176,7 +1285,9 @@ def plot_2D_histograms(
     axs[2,1].set_xlabel(f"{vardata['dbzh']['symbol']} [{vardata['dbzh']['units']}]")
     # axs[2,1].set_ylabel(f"{vardata['wradh']['symbol']} [{vardata['wradh']['units']}]")
     cbar6 = fig.colorbar(im6, ax=axs[2,1], label='Difference in normalized counts per $Z_h$ bin [%]', extend='both')
-    
+    for shape in signif_shape_col_total.geoms:
+        axs[2,1].plot(*shape.exterior.xy, **_sign_shape_kw)
+
     # Annotate the squares with the values from prob_matrix_other
     for i in range(num_bins_wradh):
         for j in range(num_bins_dbzh):
@@ -1205,6 +1316,55 @@ def plot_2D_histograms(
     # Final adjustments
     plt.tight_layout()
     plt.show()
+
+    # Statistical tests comparing WRADH distributions per DBZH bin
+    # (column of panel b vs. same column of panel d)
+    col_w = 18
+    print(
+        f"\nStatistical tests: WRADH distribution per Z_h bin  "
+        f"(Sparkles [panel b] vs Other VHF [panel d])\n"
+        f"{'Z_h bin':<{col_w}} | "
+        f"{'KS stat':>8}  {'KS p-val':>10} | "
+        f"{'AD stat':>8}  {'AD sig':>10} | "
+        f"{'Cliff δ':>8}  {'|δ| interp':>12}"
+    )
+    print("-" * (col_w + 2 + 22 + 22 + 24))
+
+    for j in range(num_bins_dbzh):
+        mask_col = (ds.DBZH >= bins_dbzh[j]) & (ds.DBZH < bins_dbzh[j + 1])
+        sp_col = hist_sparkles_norm_dbzhbin[:, j]
+        ot_col = hist_other_norm_dbzhbin[:, j]
+
+        bin_label = labels_dbzh_bins[j]
+        if len(sp_col) < 2 or len(ot_col) < 2:
+            print(f"{bin_label:<{col_w}} | {'n/a (insufficient data)'}")
+            continue
+
+        ks_stat, ks_p = ks_2samp(sp_col, ot_col)
+        try:
+            ad_result = anderson_ksamp([sp_col, ot_col])
+            ad_stat, ad_sig = ad_result.statistic, ad_result.significance_level
+        except Exception:
+            ad_stat, ad_sig = np.nan, np.nan
+        cd = cliffs_delta(sp_col, ot_col)
+
+        abs_cd = abs(cd)
+        if abs_cd < 0.147:
+            cd_interp = "negligible"
+        elif abs_cd < 0.33:
+            cd_interp = "small"
+        elif abs_cd < 0.474:
+            cd_interp = "medium"
+        else:
+            cd_interp = "large"
+
+        print(
+            f"{bin_label:<{col_w}} | "
+            f"{ks_stat:>8.4f}  {ks_p:>10.3e} | "
+            f"{ad_stat:>8.4f}  {ad_sig:>10.3e} | "
+            f"{cd:>8.4f}  {cd_interp:>12}"
+        )
+
 
     if save==True:
         if outdir == None:
