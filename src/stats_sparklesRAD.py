@@ -6,6 +6,7 @@ Created on Sun Oct 13 16:33:49 2024
 @author: rvloon
 """
 
+import csv
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import os
@@ -257,24 +258,83 @@ def make_plots(
             save=config_plots.save,
             )
 
+def _compute_two_sample_stats(x, y):
+    """Run KS, Anderson-Darling, and Cliff's delta on two 1-D samples.
+
+    Returns a dict with keys ks_stat, ks_pvalue, ad_stat, ad_pvalue,
+    cliffs_delta, cliffs_delta_interp, or None if either sample is too small.
+    """
+    if len(x) < 2 or len(y) < 2:
+        return None
+
+    ks_stat, ks_pvalue = ks_2samp(x, y)
+    try:
+        ad_result = anderson_ksamp([x, y])
+        ad_stat, ad_pvalue = ad_result.statistic, ad_result.significance_level
+    except Exception:
+        ad_stat, ad_pvalue = np.nan, np.nan
+    cd = cliffs_delta(x, y)
+
+    abs_cd = abs(cd)
+    if abs_cd < 0.147:
+        cd_interp = "negligible"
+    elif abs_cd < 0.33:
+        cd_interp = "small"
+    elif abs_cd < 0.474:
+        cd_interp = "medium"
+    else:
+        cd_interp = "large"
+
+    return {
+        "ks_stat": ks_stat,
+        "ks_pvalue": ks_pvalue,
+        "ad_stat": ad_stat,
+        "ad_pvalue": ad_pvalue,
+        "cliffs_delta": cd,
+        "cliffs_delta_interp": cd_interp,
+    }
+
+
+_STAT_FIELDS = ["ks_stat", "ks_pvalue", "ad_stat", "ad_pvalue", "cliffs_delta", "cliffs_delta_interp"]
+_EMPTY_STATS  = {k: "" for k in _STAT_FIELDS}
+
+
 def statistical_tests(
         ds,
         varlist,
         vardata,
+        save=False,
+        outname=None,
+        outdir=None,
         ):
+    rows = []
     for var in varlist:
         VAR = vardata[var]['ODIM']
         data_sparkles = ds[VAR].where(ds.mask_sparkles, drop=True).values
         data_other = ds[VAR].where(ds.mask_otherVHF & (~ds.mask_sparkles), drop=True).values
-        
-        ks_stat, ks_pvalue = ks_2samp(data_sparkles, data_other)
-        anderson_stat, anderson_critical, anderson_pvalue = anderson_ksamp([data_sparkles, data_other])
-        delta = cliffs_delta(data_sparkles, data_other)
-        
+
+        stats = _compute_two_sample_stats(data_sparkles, data_other)
+
         print(f"Statistical tests for variable {var}:")
-        print(f"      KS-test: statistic={ks_stat:.4f}, p-value={ks_pvalue:.4e}")
-        print(f"      Anderson-Darling: statistic={anderson_stat:.4f}, p-value={anderson_pvalue:.4e}")
-        print(f"      Cliff's delta={delta:.4f}")
+        if stats is None:
+            print(f"      n/a (insufficient data)")
+        else:
+            print(f"      KS-test: statistic={stats['ks_stat']:.4f}, p-value={stats['ks_pvalue']:.4e}")
+            print(f"      Anderson-Darling: statistic={stats['ad_stat']:.4f}, p-value={stats['ad_pvalue']:.4e}")
+            print(f"      Cliff's delta={stats['cliffs_delta']:.4f} ({stats['cliffs_delta_interp']})")
+
+        row = {"variable": var}
+        row.update(stats if stats is not None else _EMPTY_STATS)
+        rows.append(row)
+
+    if save:
+        outpath = outpath_gen(outdir, outdir, outname)
+        csv_path = outpath + "_statistical_tests.csv"
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["variable"] + _STAT_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f"Statistical tests saved to: {csv_path}")
 
 def main(
     config_plots : ConfigPlotSparkleStats,
@@ -328,7 +388,12 @@ def main(
         ds = ds_all
                 
         # statistical tests for each variable, comparing sparkles vs other VHF sources
-        statistical_tests(ds, ["dbzh","wradh"], vardata)
+        statistical_tests(
+            ds, ["dbzh","wradh"], vardata,
+            save=config_plots.save,
+            outname="aggregatedstats",
+            outdir=config_plots.outdir,
+            )
 
         make_plots(
             config_plots, 
@@ -1330,40 +1395,30 @@ def plot_2D_histograms(
     )
     print("-" * (col_w + 2 + 22 + 22 + 24))
 
+    stat_rows = []
     for j in range(num_bins_dbzh):
         mask_col = (ds.DBZH >= bins_dbzh[j]) & (ds.DBZH < bins_dbzh[j + 1])
         sp_col = hist_sparkles_norm_dbzhbin[:, j]
         ot_col = hist_other_norm_dbzhbin[:, j]
-
         bin_label = labels_dbzh_bins[j]
-        if len(sp_col) < 2 or len(ot_col) < 2:
+
+        stats = _compute_two_sample_stats(sp_col, ot_col)
+
+        if stats is None:
             print(f"{bin_label:<{col_w}} | {'n/a (insufficient data)'}")
-            continue
-
-        ks_stat, ks_p = ks_2samp(sp_col, ot_col)
-        try:
-            ad_result = anderson_ksamp([sp_col, ot_col])
-            ad_stat, ad_sig = ad_result.statistic, ad_result.significance_level
-        except Exception:
-            ad_stat, ad_sig = np.nan, np.nan
-        cd = cliffs_delta(sp_col, ot_col)
-
-        abs_cd = abs(cd)
-        if abs_cd < 0.147:
-            cd_interp = "negligible"
-        elif abs_cd < 0.33:
-            cd_interp = "small"
-        elif abs_cd < 0.474:
-            cd_interp = "medium"
+            row = {"dbzh_bin": bin_label}
+            row.update(_EMPTY_STATS)
+            row["cliffs_delta_interp"] = "n/a (insufficient data)"
         else:
-            cd_interp = "large"
+            print(
+                f"{bin_label:<{col_w}} | "
+                f"{stats['ks_stat']:>8.4f}  {stats['ks_pvalue']:>10.3e} | "
+                f"{stats['ad_stat']:>8.4f}  {stats['ad_pvalue']:>10.3e} | "
+                f"{stats['cliffs_delta']:>8.4f}  {stats['cliffs_delta_interp']:>12}"
+            )
+            row = {"dbzh_bin": bin_label, **stats}
 
-        print(
-            f"{bin_label:<{col_w}} | "
-            f"{ks_stat:>8.4f}  {ks_p:>10.3e} | "
-            f"{ad_stat:>8.4f}  {ad_sig:>10.3e} | "
-            f"{cd:>8.4f}  {cd_interp:>12}"
-        )
+        stat_rows.append(row)
 
 
     if save==True:
@@ -1372,3 +1427,9 @@ def plot_2D_histograms(
         outpath = outpath_gen(outdir, outdir, outname)
         fig.savefig(outpath, dpi=400)
         print("File is saved to: "+outpath+".png")
+        csv_path = outpath + "_statistical_tests.csv"
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["dbzh_bin"] + _STAT_FIELDS)
+            writer.writeheader()
+            writer.writerows(stat_rows)
+        print(f"Statistical tests saved to: {csv_path}")
