@@ -1,33 +1,96 @@
 # LOFARsparkles-radar-researchcode
-This directory provides the research code that was used to study polarimetric radar data near sparkles. The research is intended for publication. 
 
-Everyone is encouraged to produce their own figures, making use of my code. Use the article_figures.ipynb file in an iPython environment to produce all figures.
+This repository contains the research code used to study polarimetric radar signatures near *sparkles* — intense, small-scale VHF radio emissions near the tops of deep convective storms, detected by the LOFAR radio telescope. The analysis compares dual-polarisation radar observations (reflectivity, radial velocity, spectrum width, hydrometeor classification) around sparkle sources versus other VHF lightning sources, to investigate the microphysical and dynamical conditions that produce them.
 
-# Installation
-The following steps are necessary to reproduce the 
-- Download this github repository.
-- Create a python virtual environment and activate it. In the command line: python3 -m venv .venv && .venv/bin/activate
-- Navigate to the directory you dowloaded and run on the command line: pip install -e .
-This:
-	- the necessary python version and modules from setup.py
-	- adds the "src" directory to the PYTHONPATH
-- Download the required datasets (see next section)
-- In a iPython notebook environment, open the article_figures.ipynb and follow the instructions in the file to make the figures of interest.
+**Associated publication:**
+> Reinaart van Loon et al., *"Graupel and increased turbulence observed near small-scale intermittent lightning discharges at the top of intense thunderstorms"*, [DOI to be added upon publication]
 
-# Downloading the data
-The data that is necessary to run the python code and reproduce figures are the following
-- LOFAR data. Download from https://doi.org/10.5281/zenodo.17778996
-- Radar data (Borkum Island, Germany). Download from https://doi.org/10.5281/zenodo.17778996 . This directory includes two files with respectively, metadata about different radars, and metadata about plotting of different radar variables.
-- ERA5 volume data. Download from the Copernicus' Climate Data Store.
-  The following variables and ranges are required
-	- Variables: Geopotential, Temperature, meridional wind speed (v), zonal wind speed (u)
-	- All pressure levels (all vertical levels)
-	- June 18, 2021
-	- Horizontal extent of minimal 2$^\circ$  to 10$^\circ$ latitude, and 51$^\circ$ to 56$^\circ$. 
-- Wradlib's membership functions for hydrometeor classification. In the github repository as "lib/hmc_msf_cband_v2.nc". Can also be found on the Wradlib data page: https://github.com/wradlib/wradlib-data/tree/main
-- Optional: Shapefiles with the borders of countries or provinces. This is necessary for plotting of borders in geospatial plots. Dowload on www.gadm.org
+---
 
-# Troubleshooting
-- Consider using the requirements.txt file to install python packages
-- Make shure that in the article_figures.ipynb file, you fill out the right file and directory paths to the data.
-- Leave a comment in the github page: https://github.com/reinaartvanloon/LOFARsparkles-radar-researchcode
+## Repository structure
+
+### Source library (`src/`)
+
+| Module | Purpose |
+|---|---|
+| `general.py` | Shared utilities; `WindowExtent` (spatial/temporal bounding box) and `ConfigPlot` (figure saving) |
+| `read_LOFAR_data.py` | Reads LOFAR VHF CSV files; distinguishes sparkles from other VHF sources |
+| `read_RAD.py` | Loads radar volumes and composites; gridding, interpolation, masking, advection |
+| `plot_LOFAR.py` | Multi-panel LOFAR VHF visualisations with sparkle clustering |
+| `plot_RAD_crosssect.py` | Vertical radar cross-sections with LOFAR VHF overlay and temperature isotherms |
+| `plot_RAD_multivar.py` | Top-down multi-variable radar maps (Zh, vrad, W, HMC) |
+| `stats_sparklesRAD.py` | Statistical comparison of radar properties near sparkles vs. other VHF sources |
+| `meteo_analysis.py` | Skew-T and hodograph plots from radiosonde or ERA5 data (MetPy) |
+| `altitude_statistics.py` | Altitude-stratified radar statistics with bootstrap confidence intervals |
+| `advection_comparison.py` | Comparison of ERA5 vs. pySTEPS-derived advection in the statistics pipeline |
+| `compute_pystep_motion_fields.py` | Lucas-Kanade optical-flow motion fields from KNMI radar composites (pySTEPS) |
+| `sensitivity_DBSCAN.py` | One-at-a-time sensitivity study for DBSCAN sparkle clustering parameters |
+| `sensitivity_r_near_RAD.py` | Sensitivity study for the radar masking radius around VHF sources |
+
+### Example scripts (`scripts/`)
+
+| Script | Purpose |
+|---|---|
+| `LOFAR_plots.py` | Generate LOFAR VHF visualisations |
+| `radar_cross_section.py` | Generate vertical radar cross-sections |
+| `radar_topviews_multi-var.py` | Generate top-down multi-variable radar maps |
+| `skewT_plots.py` | Generate Skew-T / hodograph plots from soundings or ERA5 |
+| `altitude_statistics.py` | Run altitude-stratified radar statistics |
+| `advection_comparison.py` | Run ERA5 vs. pySTEPS advection comparison |
+| `compute_pystep_motion_fields.py` | Compute and save pySTEPS motion fields |
+| `sensitivity_DBSCAN.py` | Run DBSCAN parameter sensitivity study |
+| `sensitivity_r-near-RAD.py` | Run radar masking radius sensitivity study |
+
+---
+
+## Installation
+
+Requirements: **Python >= 3.8**. All dependencies are listed in `setup.py`.
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/reinaartvanloon/LOFARsparkles-radar-researchcode.git
+cd LOFARsparkles-radar-researchcode
+
+# 2. Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 3. Install the package and its dependencies
+pip install -e .
+```
+
+This installs all required packages and adds `src/` to the Python path so the library modules can be imported directly.
+
+---
+
+## Required data
+
+The datasets below are needed to run the code. Download them and set the corresponding paths in `article_figures.ipynb` before running.
+
+| Dataset | Source | Notes |
+|---|---|---|
+| LOFAR VHF data (CSV) | [Zenodo — doi:10.5281/zenodo.17778996](https://doi.org/10.5281/zenodo.17778996) | Lightning VHF source locations detected by LOFAR |
+| Borkum radar volumes (HDF5) | [Zenodo — doi:10.5281/zenodo.17778996](https://doi.org/10.5281/zenodo.17778996) | Dual-polarisation C-band radar data (Borkum Island, Germany) |
+| KNMI NL25/NL61/NL62 composites (HDF5) | [KNMI Data Platform](https://dataplatform.knmi.nl) | Dutch national radar network composites (1.5 km, 5-min) |
+| ERA5 reanalysis (GRIB) | [Copernicus CDS](https://cds.climate.copernicus.eu) | Variables: geopotential, temperature, u/v wind; all pressure levels; June 18, 2021; domain: 2°–10°E, 51°–56°N |
+| Hydrometeor classification membership functions | Bundled — `lib/msf_cband_v2.nc` | C-band fuzzy-logic model from [wradlib-data](https://github.com/wradlib/wradlib-data) |
+| Country/province shapefiles (optional) | [GADM](https://gadm.org) | Only required for map border overlays |
+
+---
+
+## Reproducing the figures
+
+Open `article_figures.ipynb` in a Jupyter environment and follow the instructions in the notebook. The notebook imports the library modules from `src/` and calls the operational scripts in `scripts/`. All file paths to the datasets listed above must be set in the first cells of the notebook.
+
+```bash
+jupyter notebook article_figures.ipynb
+```
+
+---
+
+## Troubleshooting
+
+- If package installation fails, try installing from `requirements.txt`: `pip install -r requirements.txt`
+- Make sure that all file and directory paths to the downloaded datasets are set correctly in `article_figures.ipynb`
+- For questions or issues, please open an issue on the [GitHub page](https://github.com/reinaartvanloon/LOFARsparkles-radar-researchcode)
