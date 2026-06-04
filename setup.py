@@ -35,7 +35,6 @@ setup(
         "scikit-learn",
         "metpy",
         "cfgrib",
-        "datetime",
         "bottleneck"
     ],
     extras_require={

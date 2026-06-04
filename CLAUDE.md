@@ -49,9 +49,9 @@ The main entry point for figure reproduction is `article_figures.ipynb` (Jupyter
 ### Operational scripts (`scripts/`)
 
 Three example scripts showing typical workflows — use these as templates for new analyses:
-- `LOFAR_operational.py` — LOFAR VHF visualization
-- `radar_cross_section_operational.py` — vertical radar slices
-- `RAD_topviews_multi-var.py` — multi-variable top-view radar
+- `LOFAR_plots.py` — LOFAR VHF visualization
+- `radar_cross_section.py` — vertical radar slices
+- `radar_topviews_multi-var.py` — multi-variable top-view radar
 
 ## Key Concepts
 

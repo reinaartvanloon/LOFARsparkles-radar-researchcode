@@ -19,8 +19,7 @@ ap = argparse.ArgumentParser(
 )
 ap.add_argument(
     "--data-dir",
-    default="/media/reinaart/KINGSTON/backup_knmi/data/radar/21C/"
-    "reflectivity_1500m_composite",
+    default="/path/to/NL25_composites",
     help="Directory containing RAD_NL25_PCP_NA_*.h5 files.",
 )
 ap.add_argument("--start",        default="2021-06-18T17:00", help="ISO start datetime.")
