@@ -348,7 +348,15 @@ class RADdata:
         dt_target : string
             The time, to which the "self" dataset is advected to
         ds_ref : xarray.Dataset
-            The dataset with the horizontal velocities "u" and "v"
+            The dataset with the horizontal velocities "u" and "v". Two kinds
+            are supported, distinguished by the ``reference_type`` attribute
+            set by ``open_reference_file``:
+
+            * ``"era5"`` (default) - 4D ERA5 winds on (time, H, latitude,
+              longitude).
+            * ``"pysteps"`` - 2D motion field on (time, y, x) in a projected
+              CRS (as produced by compute_motion_fields_pysteps.py); u and v
+              are in m/s along the projected x/y axes.
 
         Returns
         -------
@@ -357,11 +365,69 @@ class RADdata:
 
         '''
 
+        ref_type = ds_ref.attrs.get("reference_type", "era5")
         time_da, _ = xr.broadcast(self.ds.time, self.ds.longitudes)
-        u_interp = ds_ref.u.interp(
-            time=self.ds.time, longitude=self.ds.longitudes, latitude=self.ds.latitudes, H=self.ds.z)
-        v_interp = ds_ref.v.interp(
-            time=self.ds.time, longitude=self.ds.longitudes, latitude=self.ds.latitudes, H=self.ds.z)
+
+        if ref_type == "era5":
+            u_interp = ds_ref.u.interp(
+                time=self.ds.time, longitude=self.ds.longitudes, latitude=self.ds.latitudes, H=self.ds.z)
+            v_interp = ds_ref.v.interp(
+                time=self.ds.time, longitude=self.ds.longitudes, latitude=self.ds.latitudes, H=self.ds.z)
+        elif ref_type == "pysteps":
+            # u, v are along the motion file's projected x/y axes, so:
+            #   1. transform radar (lon, lat) into that CRS and interpolate there
+            #   2. rotate (u, v) into the radar's local AEQD frame before
+            #      adding the offsets to self.ds.x / self.ds.y.
+            ref_proj = ds_ref["stereographic"].attrs["proj4"]
+            radar_crs = (
+                f"+proj=aeqd +lat_0={float(self.ds.latitude.values)} "
+                f"+lon_0={float(self.ds.longitude.values)} "
+                f"+x_0=0 +y_0=0 +datum=WGS84"
+            )
+            to_ref = Transformer.from_crs("EPSG:4326", ref_proj, always_xy=True)
+            from_ref = Transformer.from_crs(ref_proj, "EPSG:4326", always_xy=True)
+            to_aeqd = Transformer.from_crs("EPSG:4326", radar_crs, always_xy=True)
+
+            lons = self.ds.longitudes.values
+            lats = self.ds.latitudes.values
+            xs, ys = to_ref.transform(lons, lats)
+
+            dims = self.ds.longitudes.dims
+            coords = self.ds.longitudes.coords
+            xs_da = xr.DataArray(xs, dims=dims, coords=coords)
+            ys_da = xr.DataArray(ys, dims=dims, coords=coords)
+            u_ref = ds_ref.u.interp(time=self.ds.time, x=xs_da, y=ys_da)
+            v_ref = ds_ref.v.interp(time=self.ds.time, x=xs_da, y=ys_da)
+
+            # Basis rotation: ref +x / +y directions expressed in AEQD frame
+            # via a finite step of 1 m in the reference CRS.
+            eps = 1.0
+            lon_x, lat_x = from_ref.transform(xs + eps, ys)
+            lon_y, lat_y = from_ref.transform(xs, ys + eps)
+            xa0, ya0 = to_aeqd.transform(lons, lats)
+            xa_x, ya_x = to_aeqd.transform(lon_x, lat_x)
+            xa_y, ya_y = to_aeqd.transform(lon_y, lat_y)
+            ex, ey = xa_x - xa0, ya_x - ya0
+            fx, fy = xa_y - xa0, ya_y - ya0
+            n_x = np.hypot(ex, ey)
+            n_y = np.hypot(fx, fy)
+            ex, ey = ex / n_x, ey / n_x
+            fx, fy = fx / n_y, fy / n_y
+
+            ex_da = xr.DataArray(ex, dims=dims, coords=coords)
+            ey_da = xr.DataArray(ey, dims=dims, coords=coords)
+            fx_da = xr.DataArray(fx, dims=dims, coords=coords)
+            fy_da = xr.DataArray(fy, dims=dims, coords=coords)
+
+            u_interp = u_ref * ex_da + v_ref * fx_da
+            v_interp = u_ref * ey_da + v_ref * fy_da
+            # Drop the x/y coords picked up from the interp targets so the
+            # resulting offsets don't clash with self.ds's own x, y variables.
+            u_interp = u_interp.drop_vars(["x", "y"], errors="ignore")
+            v_interp = v_interp.drop_vars(["x", "y"], errors="ignore")
+        else:
+            raise ValueError(
+                f"Unknown reference_type {ref_type!r}; expected 'era5' or 'pysteps'.")
 
         dt_target = np.array(dt_target).astype(
             dtype='datetime64[ns]')  # Convert to numpy datetime
@@ -592,6 +658,7 @@ class ConfigDataRAD:
     dt_range: Optional[List] = None
     window_extent: Optional[WindowExtent] = None
     epsg: int = 4326
+    advection_reference_kind: str = "era5"
 
 
 @dataclass
@@ -770,7 +837,10 @@ def get_data_RADandLOFAR(
                 radar_data.ds = radar_data.hmc(config.hmc_msf_filepath)
 
             if config.advection_reference_filepath:
-                ds_ref = open_reference_file(config.advection_reference_filepath)
+                ds_ref = open_reference_file(
+                    config.advection_reference_filepath,
+                    kind=config.advection_reference_kind,
+                )
                 radar_data.ds = radar_data.advect(dt_target, ds_ref)
 
             if "TEMP" in config.RADvars:

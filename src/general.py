@@ -952,12 +952,37 @@ def getCmap(varlib):
 # %%#%% open an ERA5 reference file
 
 
-def open_reference_file(path_reference_file):
-    import metpy.calc
-    with xr.open_dataset(path_reference_file) as ds:
-        ds["h"] = metpy.calc.geopotential_to_height(ds.z)
-        ds = ds.assign_coords(H=ds.h.mean(["longitude", "latitude", "time"]), dims='isobaricInhPa')
-        return ds.swap_dims({'isobaricInhPa': 'H'})
+def open_reference_file(path_reference_file, kind="era5"):
+    """Open an advection/temperature reference dataset.
+
+    Parameters
+    ----------
+    path_reference_file : str or Path
+    kind : {"era5", "pysteps"}
+        "era5"    - 4D ERA5 file (time, isobaricInhPa, lat, lon) with
+                    geopotential z; returned with an H (height) vertical coord.
+                    Usable for both temperature and advection references.
+        "pysteps" - 2D motion-field NetCDF from
+                    scripts/compute_motion_fields_pysteps.py, with dims
+                    (time, y, x) and u, v in m/s along the native stereographic
+                    x/y axes. Advection only.
+
+    The returned dataset carries a `reference_type` attribute so downstream
+    code (e.g. Radar_data.advect) can branch on the kind.
+    """
+    if kind == "era5":
+        import metpy.calc
+        with xr.open_dataset(path_reference_file) as ds:
+            ds["h"] = metpy.calc.geopotential_to_height(ds.z)
+            ds = ds.assign_coords(H=ds.h.mean(["longitude", "latitude", "time"]), dims='isobaricInhPa')
+            ds = ds.swap_dims({'isobaricInhPa': 'H'})
+            ds.attrs["reference_type"] = "era5"
+            return ds
+    if kind == "pysteps":
+        ds = xr.open_dataset(path_reference_file, engine="h5netcdf").load()
+        ds.attrs["reference_type"] = "pysteps"
+        return ds
+    raise ValueError(f"Unknown kind {kind!r}; expected 'era5' or 'pysteps'.")
 
 
 def split_dim_to_variables(ds: xr.Dataset, dim: str = "obs") -> xr.Dataset:
