@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the associated publication."
+title: "LOFARsparkles-radar-researchcode"
+license: MIT
+repository-code: https://github.com/reinaartvanloon/LOFARsparkles-radar-researchcode
+authors:
+  - family-names: van Loon
+    given-names: Reinaart
+  - family-names: Assink
+    given-names: Jelle D.
+  - family-names: Scholten
+    given-names: Olaf
+  - family-names: Hare
+    given-names: Brian M.
+  - family-names: Leijnse
+    given-names: Hidde
+  - family-names: van Delden
+    given-names: Aarnout J.
+preferred-citation:
+  type: article
+  title: "Graupel and increased turbulence observed near small-scale intermittent lightning discharges at the top of intense thunderstorms"
+  authors:
+    - family-names: van Loon
+      given-names: Reinaart
+    - family-names: Assink
+      given-names: Jelle D.
+    - family-names: Scholten
+      given-names: Olaf
+    - family-names: Hare
+      given-names: Brian M.
+    - family-names: Leijnse
+      given-names: Hidde
+    - family-names: van Delden
+      given-names: Aarnout J.
+  year: 2026
+  doi: "to-be-added"
