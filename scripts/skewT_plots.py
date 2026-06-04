@@ -13,10 +13,16 @@ for p in (here, src):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from meteo_analysis_test import plot_skewt, ConfigSounding, ConfigERA5, ConfigSkewT
+from meteo_analysis import plot_skewt, ConfigSounding, ConfigERA5, ConfigSkewT
+
+# ── Configure paths before running ──────────────────────────────────────────
+sounding_dir = "/path/to/sounding_data"       # directory with radiosonde CSV files
+era5_file    = "/path/to/ERA5_volume.grib"    # ERA5 GRIB (Copernicus CDS)
+output_dir   = "/path/to/output"
+# ─────────────────────────────────────────────────────────────────────────────
 
 #%%
-datadir = "/home/reinaart/sparkles/meteo_data/"
+datadir = sounding_dir + "/"
 # filename = "2021061812-soundingMeppen.csv"
 # filename = "2021061812-Nordeney10113.csv"
 # filename = "2021061821-Nordeney10113.csv"
@@ -25,7 +31,7 @@ config_sounding = ConfigSounding(
     filepath=datadir+filename
 )
 
-outdir = "/home/reinaart/sparkles/temp_figures/skewt_diagrams/loc_deBilt"
+outdir = os.path.join(output_dir, "skewt_diagrams", "loc_deBilt")
 outname = "locDeBilt_11UTC"
 
 config_skewt_sounding = ConfigSkewT(
@@ -53,11 +59,11 @@ lon=7
 hh = 18
 time=f"2021-06-18 {hh}:00:00"
 outname = f"lon{lon}_lat{lat}_{hh}UTC"
-outdir = f"/home/reinaart/sparkles/temp_figures/skewt_diagrams/lon{lon}_lat{lat}"
+outdir = os.path.join(output_dir, "skewt_diagrams", f"lon{lon}_lat{lat}")
 
 
 config_era5 = ConfigERA5(
-    filepath="/home/reinaart/sparkles/meteo_data/ERA5_volume_20210618.grib",
+    filepath=era5_file,
     time=time,
     latitude=lat,
     longitude=lon,
@@ -78,7 +84,7 @@ plot = plot_skewt(config_era5, config_skewt_era5)
 
 import xarray as xr
 import numpy as np
-path = '/home/reinaart/sparkles/meteo_data/ERA5_volume_20210618.grib'
+path = era5_file
 ds = xr.open_dataset(path, engine='cfgrib')
 lat = ds['latitude'].values
 lon = ds['longitude'].values

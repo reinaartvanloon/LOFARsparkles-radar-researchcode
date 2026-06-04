@@ -51,11 +51,19 @@ args = parser.parse_args()
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
+# ── Configure paths before running ──────────────────────────────────────────
+rad_data_dirpath             = "/path/to/borkum_radar"           # HDF5 volume files (Zenodo)
+lofar_data_dirpath           = "/path/to/LOFAR"                  # LOFAR CSV files (Zenodo)
+advection_reference_filepath = "/path/to/ERA5_20210618.grib"     # ERA5 GRIB (Copernicus CDS)
+hmc_msf_filepath             = "lib/msf_cband_v2.nc"             # bundled in repo lib/
+output_dir                   = "/path/to/output"
+# ─────────────────────────────────────────────────────────────────────────────
+
 config_data = ConfigSensitivityRadiusData(
-    rad_data_dirpath             = "/home/reinaart/sparkles/data_zenodo/borkum_radar",
-    lofar_data_dirpath           = "/home/reinaart/sparkles/data_zenodo/LOFAR",
-    advection_reference_filepath = "/home/reinaart/sparkles/data_additional/ERA5_20210618.grib",
-    hmc_msf_filepath             = "/home/reinaart/sparkles/data_additional/msf_cband_v2.nc",
+    rad_data_dirpath             = rad_data_dirpath,
+    lofar_data_dirpath           = lofar_data_dirpath,
+    advection_reference_filepath = advection_reference_filepath,
+    hmc_msf_filepath             = hmc_msf_filepath,
     lofar_file_list = [
         "21C1eCt-all.dat",
         "21C2en-all.dat",
@@ -75,7 +83,7 @@ config_data = ConfigSensitivityRadiusData(
     ),
 )
 
-outdir = "/home/reinaart/sparkles/temp_figures/sensitivity_r-near-RAD"
+outdir = os.path.join(output_dir, "sensitivity_r-near-RAD")
 
 
 config_plot = ConfigSensitivityRadiusPlot(
