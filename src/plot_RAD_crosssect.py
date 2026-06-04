@@ -16,10 +16,12 @@ Created on Wed Jan 10 13:56:39 2024
 
 import os
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as pe
 import cartopy.crs as ccrs
 from pandas import to_datetime
 import matplotlib.gridspec as gridspec
 import numpy as np
+import xarray as xr
 from dataclasses import dataclass, field
 from typing import Optional, List
 from pyproj.transformer import Transformer
@@ -28,7 +30,7 @@ from matplotlib.ticker import FuncFormatter
 
 #Custom funtions
 from read_RAD import get_data_RADandLOFAR, ConfigDataRAD
-from general import outpath_gen, lineProjection, plot_parallel_lines, getCmap,  ConfigSpatialPlot, add_plotting_objects, PlottingObject, plot_borders
+from general import outpath_gen, lineProjection, plot_parallel_lines, getCmap,  ConfigSpatialPlot, add_plotting_objects, PlottingObject, plot_borders, open_reference_file
 from plot_LOFAR import masking_VHF_types, ConfigLOFAR, filter_mask_LOFAR, cluster_LOFARsparkles
 
 
@@ -63,6 +65,7 @@ def plotter(
         config_LOFAR:ConfigLOFAR = None,
         VHF_masks = None,
         outname = None,
+        temp_isotherms = None,
         ):
     
     if outname is None: outname = config.outname
@@ -232,6 +235,31 @@ def plotter(
                     )
                 [line.set(linestyle=':', color='k',linewidth=linewidth*2) for line in parallel_lines]
         
+    if temp_isotherms is not None:
+        xy_arr = data.RAD.cross_sect.xy.values
+        z_range = config.plot_extent.z[1] - config.plot_extent.z[0]
+        label_offset = z_range * 0.01  # 2% of plot height above the line
+        isotherm_styles = {"0": ("white", "--"), "-40": ("white", ":")}
+        for temp_str, (color, ls) in isotherm_styles.items():
+            level = temp_isotherms[temp_str]
+            ax2.plot(
+                xy_arr,
+                level,
+                color=color, linestyle=ls, linewidth=linewidth * 2,
+                label=f'{temp_str}°C',
+            )
+            valid = ~np.isnan(level)
+            if valid.any():
+                x_label = xy_arr[valid][-1]
+                y_label = level[valid][-1] + label_offset
+                txt = ax2.text(
+                    x_label, y_label, f'{temp_str}°C',
+                    color='white', fontsize=7, ha='right', va='bottom',
+                )
+                txt.set_path_effects([
+                    pe.withStroke(linewidth=1., foreground='black')
+                ])
+
     ax2.set_ylim(config.plot_extent.z[0], config.plot_extent.z[1])
     
     # Define a formatting function: divide by 1000 and format as int
@@ -304,6 +332,50 @@ def plotter(
         
 #%%
 
+def _compute_temp_isotherms(cross_sect, transform2lonlat, pointA, pointB, temp_reference_filepath):
+    """Compute altitudes of 0°C and -40°C isotherms along the cross-section.
+
+    Returns a dict with keys "0" and "-40", each a 1-D array (metres) indexed
+    by the cross-section xy coordinate.  NaN where the isotherm is absent.
+    """
+    xy_arr = cross_sect.xy.values
+    xy_total = xy_arr[-1]
+    t_frac = xy_arr / xy_total if xy_total > 0 else np.zeros_like(xy_arr)
+
+    pA = np.array(pointA)
+    pB = np.array(pointB)
+    pts_aeqd = pA + t_frac[:, None] * (pB - pA)
+    lons, lats = transform2lonlat.transform(pts_aeqd[:, 0], pts_aeqd[:, 1])
+
+    time_mean = cross_sect.time.mean().values
+
+    with open_reference_file(temp_reference_filepath) as ds_ref:
+        t_interp = ds_ref.t.interp(
+            time=time_mean,
+            longitude=xr.DataArray(lons, dims='xy'),
+            latitude=xr.DataArray(lats, dims='xy'),
+        ) - 273.15  # (H, xy) in Celsius
+
+    H_vals = t_interp.H.values
+    t_vals = t_interp.values  # shape (n_H, n_xy)
+
+    result = {}
+    for threshold in (0.0, -40.0):
+        level = np.full(len(xy_arr), np.nan)
+        for i in range(len(xy_arr)):
+            T_col = t_vals[:, i]
+            shifted = T_col - threshold
+            crossings = np.where(np.diff(np.sign(shifted)))[0]
+            if len(crossings) > 0:
+                idx = crossings[0]
+                T0, T1 = shifted[idx], shifted[idx + 1]
+                H0, H1 = H_vals[idx], H_vals[idx + 1]
+                level[i] = H0 + (H1 - H0) * (-T0) / (T1 - T0)
+        result[str(int(threshold))] = level
+
+    return result
+
+
 def main(
     config_plot: ConfigPlotRADcrossSection,
     config_data_RAD: ConfigDataRAD,
@@ -346,6 +418,16 @@ def main(
         method=config_plot.interpolation_method,
         )
     
+    temp_isotherms = None
+    if config_data_RAD.temp_reference_filepath:
+        temp_isotherms = _compute_temp_isotherms(
+            data.RAD.cross_sect,
+            transform2lonlat,
+            config_plot.pointA,
+            config_plot.pointB,
+            config_data_RAD.temp_reference_filepath,
+        )
+
     VHF_masks = None
     if config_LOFAR is not None:
         mask_not_large_clusters, mask_sparkles = cluster_LOFARsparkles(
@@ -387,5 +469,6 @@ def main(
                 config_LOFAR = config_LOFAR,
                 VHF_masks = VHF_masks,
                 outname = outname,
+                temp_isotherms = temp_isotherms,
                 )
    
