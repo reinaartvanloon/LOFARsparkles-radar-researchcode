@@ -229,46 +229,38 @@ def surrounding_data(df_VHF, ds_ref, d, D=None, method="nearest_distance", dimen
     if method != "nearest_distance":
         raise AttributeError("Method '{}' not supported. Choose from: {}".format(method, 'nearest_distance'))
 
-    # mask = sweep.distance_to_crosssect<D
     x_RAD = ds_ref.x.values.ravel()
     y_RAD = ds_ref.y.values.ravel()
     z_RAD = ds_ref.z.values.ravel()
 
+    x_LO = np.asarray(df_VHF.x)
+    y_LO = np.asarray(df_VHF.y)
+    z_LO = np.asarray(df_VHF.z)
+
     if dimension == 'horizontal':
-        points = np.stack((x_RAD, y_RAD), axis=1)
+        radar_points = np.stack((x_RAD, y_RAD), axis=1)
+        lofar_points = np.stack((x_LO, y_LO), axis=1)
     elif dimension == '3D':
-        points = np.stack((x_RAD, y_RAD, z_RAD), axis=1)
+        radar_points = np.stack((x_RAD, y_RAD, z_RAD), axis=1)
+        lofar_points = np.stack((x_LO, y_LO, z_LO), axis=1)
     else:
         raise AttributeError(f"dimension {dimension} not supported")
 
-    tree = KDTree(points)
+    if len(lofar_points) == 0:
+        empty = np.array([], dtype=np.int64)
+        return (empty, empty) if D else empty
 
-    x_LO = df_VHF.x
-    y_LO = df_VHF.y
-    z_LO = df_VHF.z
+    # Build a small KDTree of LOFAR sources and query once with all radar points.
+    # This gives, for each radar point, the distance to its nearest LOFAR source.
+    # Memory is O(n_radar), avoiding the O(n_lofar × n_neighbors) list-of-lists
+    # that query_ball_point produces when n_lofar is large.
+    lofar_tree = KDTree(lofar_points)
+    dist, _ = lofar_tree.query(radar_points, k=1, workers=-1)
 
-    if dimension == 'horizontal':
-        target_points = np.stack((x_LO, y_LO), axis=1)
-    elif dimension == '3D':
-        target_points = np.stack((x_LO, y_LO, z_LO), axis=1)
-    else:
-        raise AttributeError(f"dimension kwarg {dimension} not supported")
-
-    ii_d = tree.query_ball_point(target_points, r=d)
-    if len(ii_d) == 0:
-        ii_near = []
-    elif len(ii_d) == 1:
-        ii_near = ii_d
-    else:
-        ii_near = np.unique(np.concatenate(ii_d)).astype(np.int64)
-    # time = ds_ref.time.broadcast_like(ds_ref.x)
-    # d_t = time.values.ravel()[ii_near]
+    ii_near = np.where(dist < d)[0].astype(np.int64)
 
     if D:
-        ii_D = tree.query_ball_point(target_points, r=D)
-        ii_D = np.unique(np.concatenate(ii_D))
-        ii_surround = ii_D[~np.isin(ii_D, ii_near)].astype(np.int64)
-
+        ii_surround = np.where((dist >= d) & (dist < D))[0].astype(np.int64)
         return ii_near, ii_surround
     else:
         return ii_near
